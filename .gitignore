@@ -1,0 +1,8 @@
+dist/
+tmp/
+*.log
+*.tmp
+*.exe
+*.dmg
+*.syso
+.DS_Store
