@@ -2,7 +2,17 @@
 
 Convert Excel `IMAGE(url)` formulas and plain image links into real Excel pictures embedded in cells.
 
-Current version: `v1.0.5`.
+Current version: `v1.0.6`.
+
+## Preview
+
+<p>
+  <img src="docs/images/app-icon-preview.png" alt="Excel 图片转换器 app icon" width="160">
+</p>
+
+![Excel 图片转换器 main window](docs/images/app-interface.png)
+
+The screenshots are for visual reference; the version text shown in the window may differ from the latest release.
 
 The tool is designed for non-technical Windows and macOS users:
 
@@ -96,11 +106,11 @@ GitHub Actions publishes releases automatically when a version tag is pushed.
 3. Create and push a matching tag:
 
 ```bash
-git tag v1.0.5
-git push origin v1.0.5
+git tag "v$(tr -d '[:space:]' < VERSION)"
+git push origin "v$(tr -d '[:space:]' < VERSION)"
 ```
 
-The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.5` must be released with tag `v1.0.5`.
+The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.6` must be released with tag `v1.0.6`.
 
 The release workflow builds and uploads:
 
