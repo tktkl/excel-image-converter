@@ -239,14 +239,15 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	}
 	assertPackageContainsPart(t, result.OutputPath, "xl/cellimages.xml")
 	assertPackageContainsPart(t, result.OutputPath, "xl/_rels/cellimages.xml.rels")
-	assertPackageContains(t, result.OutputPath, `_xlfn.DISPIMG`)
-	assertPackageContains(t, result.OutputPath, `<v>ID_`)
-	assertPackageContains(t, result.OutputPath, `t="str"`)
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/richData/")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/metadata.xml")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/calcChain.xml")
 	assertPackageDoesNotContain(t, result.OutputPath, url, "#VALUE!", "IMAGE(")
-	assertPackageDoesNotContain(t, result.OutputPath, "richData/", "calcChain.xml")
+	assertPackageDoesNotContain(t, result.OutputPath,
+		"_xlfn.DISPIMG", "<v>ID_", `t="str"`,
+		"xdr:cNvPicPr", "a:stretch", "xdr:spPr",
+		"richData/", "calcChain.xml",
+	)
 	assertXMLPartsParse(t, result.OutputPath)
 	assertNoConverterTempFiles(t, result.OutputPath)
 }

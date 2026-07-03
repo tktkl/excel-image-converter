@@ -183,12 +183,10 @@ type wpsCellImageWrite struct {
 type wpsPicWrite struct {
 	NvPicPr  wpsNvPicPrWrite  `xml:"xdr:nvPicPr"`
 	BlipFill wpsBlipFillWrite `xml:"xdr:blipFill"`
-	SpPr     *xmlInner        `xml:"xdr:spPr,omitempty"`
 }
 
 type wpsNvPicPrWrite struct {
-	CNvPr    wpsCNvPrWrite `xml:"xdr:cNvPr"`
-	CNvPicPr *xmlInner     `xml:"xdr:cNvPicPr,omitempty"`
+	CNvPr wpsCNvPrWrite `xml:"xdr:cNvPr"`
 }
 
 type wpsCNvPrWrite struct {
@@ -198,8 +196,7 @@ type wpsCNvPrWrite struct {
 }
 
 type wpsBlipFillWrite struct {
-	Blip    wpsBlipWrite `xml:"a:blip"`
-	Stretch *xmlInner    `xml:"a:stretch,omitempty"`
+	Blip wpsBlipWrite `xml:"a:blip"`
 }
 
 type wpsBlipWrite struct {
@@ -771,13 +768,10 @@ func marshalWPSCellImages(cellImages *wpsCellImagesXML) ([]byte, error) {
 						Name:  image.Pic.NvPicPr.CNvPr.Name,
 						Descr: image.Pic.NvPicPr.CNvPr.Descr,
 					},
-					CNvPicPr: &xmlInner{},
 				},
 				BlipFill: wpsBlipFillWrite{
-					Blip:    wpsBlipWrite{Embed: image.Pic.BlipFill.Blip.Embed},
-					Stretch: &xmlInner{InnerXML: `<a:fillRect/>`},
+					Blip: wpsBlipWrite{Embed: image.Pic.BlipFill.Blip.Embed},
 				},
-				SpPr: &xmlInner{},
 			},
 		})
 	}
@@ -1652,7 +1646,7 @@ func writeCellImageElement(encoder *xml.Encoder, original xml.StartElement, cell
 
 func writeDispImageElement(encoder *xml.Encoder, original xml.StartElement, cell, imageID string, prefixes namespacePrefixes) error {
 	original = normalizeStartElement(original, prefixes)
-	attrs := make([]xml.Attr, 0, len(original.Attr)+1)
+	attrs := make([]xml.Attr, 0, len(original.Attr))
 	hasRef := false
 	for _, attr := range original.Attr {
 		switch attr.Name.Local {
@@ -1668,7 +1662,6 @@ func writeDispImageElement(encoder *xml.Encoder, original xml.StartElement, cell
 	if !hasRef {
 		attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "r"}, Value: cell})
 	}
-	attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "t"}, Value: "str"})
 	start := xml.StartElement{Name: original.Name, Attr: attrs}
 	return writeDispImageFormula(encoder, start, imageID)
 }
@@ -1690,7 +1683,6 @@ func writeNewDispImageElement(encoder *xml.Encoder, cell, imageID string) error 
 		Name: xml.Name{Local: "c"},
 		Attr: []xml.Attr{
 			{Name: xml.Name{Local: "r"}, Value: cell},
-			{Name: xml.Name{Local: "t"}, Value: "str"},
 		},
 	}
 	return writeDispImageFormula(encoder, start, imageID)
@@ -1721,22 +1713,10 @@ func writeDispImageFormula(encoder *xml.Encoder, start xml.StartElement, imageID
 	if err := encoder.EncodeToken(formulaStart); err != nil {
 		return err
 	}
-	if err := encoder.EncodeToken(xml.CharData(fmt.Sprintf(`_xlfn.DISPIMG("%s",1)`, imageID))); err != nil {
+	if err := encoder.EncodeToken(xml.CharData(fmt.Sprintf(`DISPIMG("%s",1)`, imageID))); err != nil {
 		return err
 	}
 	if err := encoder.EncodeToken(formulaStart.End()); err != nil {
-		return err
-	}
-	// WPS may resolve DISPIMG before recalculating third-party generated files.
-	// Keep the cached formula result aligned with cNvPr@name to avoid #REF!.
-	valueStart := xml.StartElement{Name: xml.Name{Local: "v"}}
-	if err := encoder.EncodeToken(valueStart); err != nil {
-		return err
-	}
-	if err := encoder.EncodeToken(xml.CharData(imageID)); err != nil {
-		return err
-	}
-	if err := encoder.EncodeToken(valueStart.End()); err != nil {
 		return err
 	}
 	return encoder.EncodeToken(start.End())
