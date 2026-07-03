@@ -86,3 +86,28 @@ dist/macos/ExcelImageConverter-mac-arm64.dmg
 ```
 
 `assets/app-icon.png` is the generated app icon source. `scripts/make_icons.go` creates `assets/app-icon.ico` and `assets/app-icon.icns` for Windows taskbar and macOS Dock/Finder integration.
+
+## Release
+
+GitHub Actions publishes releases automatically when a version tag is pushed.
+
+1. Update `VERSION` and the app version constants if needed.
+2. Commit and push the code.
+3. Create and push a matching tag:
+
+```bash
+git tag v1.0.5
+git push origin v1.0.5
+```
+
+The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.5` must be released with tag `v1.0.5`.
+
+The release workflow builds and uploads:
+
+```text
+ExcelImageConverter-windows-amd64.exe
+ExcelImageConverter-mac-arm64.dmg
+SHA256SUMS.txt
+```
+
+Build outputs stay out of git and are distributed through GitHub Releases.
