@@ -38,6 +38,7 @@ const (
 	drawingMLNamespace      = "http://schemas.openxmlformats.org/drawingml/2006/main"
 	spreadsheetDrawingNS    = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 	wpsCellImageNamespace   = "http://www.wps.cn/officeDocument/2017/etCustomData"
+	wpsCellImageRelType     = "http://www.wps.cn/officeDocument/2020/cellImage"
 	richDataNamespace       = "http://schemas.microsoft.com/office/spreadsheetml/2017/richdata"
 	richDataWebImageNS      = "http://schemas.microsoft.com/office/spreadsheetml/2020/richdatawebimage"
 	imageRelationshipType   = officeRelsNamespace + "/image"
@@ -150,10 +151,12 @@ type wpsCellImage struct {
 type wpsPic struct {
 	NvPicPr  wpsNvPicPr  `xml:"nvPicPr"`
 	BlipFill wpsBlipFill `xml:"blipFill"`
+	SpPr     wpsSpPr     `xml:"spPr"`
 }
 
 type wpsNvPicPr struct {
-	CNvPr wpsCNvPr `xml:"cNvPr"`
+	CNvPr    wpsCNvPr    `xml:"cNvPr"`
+	CNvPicPr wpsCNvPicPr `xml:"cNvPicPr"`
 }
 
 type wpsCNvPr struct {
@@ -163,12 +166,19 @@ type wpsCNvPr struct {
 }
 
 type wpsBlipFill struct {
-	Blip wpsBlip `xml:"blip"`
+	Blip    wpsBlip    `xml:"blip"`
+	Stretch wpsStretch `xml:"stretch"`
 }
 
 type wpsBlip struct {
 	Embed string `xml:"embed,attr"`
 }
+
+type wpsCNvPicPr struct{}
+
+type wpsStretch struct{}
+
+type wpsSpPr struct{}
 
 type wpsCellImagesWriteXML struct {
 	XMLName    xml.Name            `xml:"etc:cellImages"`
@@ -183,10 +193,12 @@ type wpsCellImageWrite struct {
 type wpsPicWrite struct {
 	NvPicPr  wpsNvPicPrWrite  `xml:"xdr:nvPicPr"`
 	BlipFill wpsBlipFillWrite `xml:"xdr:blipFill"`
+	SpPr     wpsSpPrWrite     `xml:"xdr:spPr"`
 }
 
 type wpsNvPicPrWrite struct {
-	CNvPr wpsCNvPrWrite `xml:"xdr:cNvPr"`
+	CNvPr    wpsCNvPrWrite    `xml:"xdr:cNvPr"`
+	CNvPicPr wpsCNvPicPrWrite `xml:"xdr:cNvPicPr"`
 }
 
 type wpsCNvPrWrite struct {
@@ -196,12 +208,54 @@ type wpsCNvPrWrite struct {
 }
 
 type wpsBlipFillWrite struct {
-	Blip wpsBlipWrite `xml:"a:blip"`
+	Blip    wpsBlipWrite    `xml:"a:blip"`
+	Stretch wpsStretchWrite `xml:"a:stretch"`
 }
 
 type wpsBlipWrite struct {
 	Embed string `xml:"r:embed,attr"`
 }
+
+type wpsCNvPicPrWrite struct {
+	PicLocks wpsPicLocksWrite `xml:"a:picLocks"`
+}
+
+type wpsPicLocksWrite struct {
+	NoChangeAspect int `xml:"noChangeAspect,attr"`
+}
+
+type wpsStretchWrite struct {
+	FillRect wpsFillRectWrite `xml:"a:fillRect"`
+}
+
+type wpsFillRectWrite struct{}
+
+type wpsSpPrWrite struct {
+	Xfrm     wpsXfrmWrite     `xml:"a:xfrm"`
+	PrstGeom wpsPrstGeomWrite `xml:"a:prstGeom"`
+}
+
+type wpsXfrmWrite struct {
+	Off wpsPointWrite `xml:"a:off"`
+	Ext wpsExtWrite   `xml:"a:ext"`
+}
+
+type wpsPointWrite struct {
+	X int `xml:"x,attr"`
+	Y int `xml:"y,attr"`
+}
+
+type wpsExtWrite struct {
+	CX int `xml:"cx,attr"`
+	CY int `xml:"cy,attr"`
+}
+
+type wpsPrstGeomWrite struct {
+	Prst  string        `xml:"prst,attr"`
+	AvLst wpsAvLstWrite `xml:"a:avLst"`
+}
+
+type wpsAvLstWrite struct{}
 
 type relationshipRef struct {
 	RID string `xml:"r:id,attr"`
@@ -335,7 +389,7 @@ func writeDispImageCellImages(xlsxPath string, images []embeddedCellImage, keepU
 		return err
 	}
 
-	idByCell, err := addDispImageCellImages(pkg, images)
+	idByCell, err := addDispImageCellImages(pkg, images, keepURL)
 	if err != nil {
 		return err
 	}
@@ -676,7 +730,7 @@ func removeContentOverrides(pkg map[string][]byte, remove func(partName string) 
 	return nil
 }
 
-func addDispImageCellImages(pkg map[string][]byte, images []embeddedCellImage) (map[cellKey]string, error) {
+func addDispImageCellImages(pkg map[string][]byte, images []embeddedCellImage, keepURL bool) (map[cellKey]string, error) {
 	cellImages, err := readWPSCellImages(pkg)
 	if err != nil {
 		return nil, err
@@ -702,18 +756,25 @@ func addDispImageCellImages(pkg map[string][]byte, images []embeddedCellImage) (
 		imageID := uniqueDispImageID(image, idx, usedIDs)
 		pictureID := nextPictureID
 		nextPictureID++
+		description := fmt.Sprintf("CellImage%d", pictureID)
+		if keepURL {
+			description = image.Target.URL
+		}
 		cellImages.CellImages = append(cellImages.CellImages, wpsCellImage{
 			Pic: wpsPic{
 				NvPicPr: wpsNvPicPr{
 					CNvPr: wpsCNvPr{
 						ID:    pictureID,
 						Name:  imageID,
-						Descr: fmt.Sprintf("CellImage%d", pictureID),
+						Descr: description,
 					},
+					CNvPicPr: wpsCNvPicPr{},
 				},
 				BlipFill: wpsBlipFill{
-					Blip: wpsBlip{Embed: relID},
+					Blip:    wpsBlip{Embed: relID},
+					Stretch: wpsStretch{},
 				},
+				SpPr: wpsSpPr{},
 			},
 		})
 		idByCell[cellKey{Sheet: image.Target.Sheet, Cell: image.Target.Cell}] = imageID
@@ -731,6 +792,9 @@ func addDispImageCellImages(pkg map[string][]byte, images []embeddedCellImage) (
 	pkg[cellImagesPath] = cellImagesBytes
 	pkg[cellImagesRelsPath] = relsBytes
 	if err := ensureBasicContentTypes(pkg, images); err != nil {
+		return nil, err
+	}
+	if err := ensureWorkbookDispImageRelationship(pkg); err != nil {
 		return nil, err
 	}
 	return idByCell, nil
@@ -768,9 +832,23 @@ func marshalWPSCellImages(cellImages *wpsCellImagesXML) ([]byte, error) {
 						Name:  image.Pic.NvPicPr.CNvPr.Name,
 						Descr: image.Pic.NvPicPr.CNvPr.Descr,
 					},
+					CNvPicPr: wpsCNvPicPrWrite{
+						PicLocks: wpsPicLocksWrite{NoChangeAspect: 1},
+					},
 				},
 				BlipFill: wpsBlipFillWrite{
-					Blip: wpsBlipWrite{Embed: image.Pic.BlipFill.Blip.Embed},
+					Blip:    wpsBlipWrite{Embed: image.Pic.BlipFill.Blip.Embed},
+					Stretch: wpsStretchWrite{FillRect: wpsFillRectWrite{}},
+				},
+				SpPr: wpsSpPrWrite{
+					Xfrm: wpsXfrmWrite{
+						Off: wpsPointWrite{X: 3939540, Y: 914400},
+						Ext: wpsExtWrite{CX: 1142365, CY: 198120},
+					},
+					PrstGeom: wpsPrstGeomWrite{
+						Prst:  "rect",
+						AvLst: wpsAvLstWrite{},
+					},
 				},
 			},
 		})
@@ -985,6 +1063,21 @@ func ensureWorkbookRichDataRelationships(pkg map[string][]byte) error {
 	ensureWorkbookRelationship(rels, richValueStructureRel, "richData/rdrichvaluestructure.xml", richValueStructurePath)
 	ensureWorkbookRelationship(rels, richValueTypesRel, "richData/rdRichValueTypes.xml", richValueTypesPath)
 	ensureWorkbookRelationship(rels, richValueWebImageRel, "richData/rdRichValueWebImage.xml", richValueWebImagePath)
+	normalizeRelationships(rels)
+	data, err := xml.Marshal(rels)
+	if err != nil {
+		return err
+	}
+	pkg[workbookRelsPath] = data
+	return nil
+}
+
+func ensureWorkbookDispImageRelationship(pkg map[string][]byte) error {
+	rels, err := readRelationships(pkg, workbookRelsPath)
+	if err != nil {
+		return err
+	}
+	ensureWorkbookRelationship(rels, wpsCellImageRelType, "cellimages.xml", cellImagesPath)
 	normalizeRelationships(rels)
 	data, err := xml.Marshal(rels)
 	if err != nil {
@@ -1662,6 +1755,7 @@ func writeDispImageElement(encoder *xml.Encoder, original xml.StartElement, cell
 	if !hasRef {
 		attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "r"}, Value: cell})
 	}
+	attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "t"}, Value: "str"})
 	start := xml.StartElement{Name: original.Name, Attr: attrs}
 	return writeDispImageFormula(encoder, start, imageID)
 }
@@ -1683,6 +1777,7 @@ func writeNewDispImageElement(encoder *xml.Encoder, cell, imageID string) error 
 		Name: xml.Name{Local: "c"},
 		Attr: []xml.Attr{
 			{Name: xml.Name{Local: "r"}, Value: cell},
+			{Name: xml.Name{Local: "t"}, Value: "str"},
 		},
 	}
 	return writeDispImageFormula(encoder, start, imageID)
@@ -1709,14 +1804,25 @@ func writeDispImageFormula(encoder *xml.Encoder, start xml.StartElement, imageID
 	if err := encoder.EncodeToken(start); err != nil {
 		return err
 	}
+	displayFormula := fmt.Sprintf(`DISPIMG("%s",1)`, imageID)
 	formulaStart := xml.StartElement{Name: xml.Name{Local: "f"}}
 	if err := encoder.EncodeToken(formulaStart); err != nil {
 		return err
 	}
-	if err := encoder.EncodeToken(xml.CharData(fmt.Sprintf(`DISPIMG("%s",1)`, imageID))); err != nil {
+	if err := encoder.EncodeToken(xml.CharData("_xlfn." + displayFormula)); err != nil {
 		return err
 	}
 	if err := encoder.EncodeToken(formulaStart.End()); err != nil {
+		return err
+	}
+	valueStart := xml.StartElement{Name: xml.Name{Local: "v"}}
+	if err := encoder.EncodeToken(valueStart); err != nil {
+		return err
+	}
+	if err := encoder.EncodeToken(xml.CharData("=" + displayFormula)); err != nil {
+		return err
+	}
+	if err := encoder.EncodeToken(valueStart.End()); err != nil {
 		return err
 	}
 	return encoder.EncodeToken(start.End())

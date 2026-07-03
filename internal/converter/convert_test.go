@@ -202,8 +202,12 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	t.Cleanup(func() {
 		_ = f.Close()
 	})
-	url := "https://example.com/for-wps.png?x=1"
-	if err := f.SetCellValue("Sheet1", "A1", url); err != nil {
+	plainURL := "https://example.com/for-wps-a.png?x=1"
+	formulaURL := "https://example.com/for-wps-b.jpg?x=2"
+	if err := f.SetCellValue("Sheet1", "A1", plainURL); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellFormula("Sheet1", "B1", `=IMAGE("`+formulaURL+`")`); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.SaveAs(input); err != nil {
@@ -215,39 +219,83 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.Converted != 2 {
+		t.Fatalf("Converted = %d, want 2", result.Converted)
+	}
 	out, err := excelize.OpenFile(result.OutputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer out.Close()
-	formula, err := out.GetCellFormula("Sheet1", "A1")
-	if err != nil {
-		t.Fatal(err)
+	imageIDs := map[string]string{}
+	for _, cell := range []string{"A1", "B1"} {
+		formula, err := out.GetCellFormula("Sheet1", cell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(formula, `_xlfn.DISPIMG("ID_`) {
+			t.Fatalf("%s formula = %q, want _xlfn.DISPIMG", cell, formula)
+		}
+		imageID, err := out.CalcCellValue("Sheet1", cell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(imageID, "ID_") {
+			t.Fatalf("%s calculated value = %q, want image ID", cell, imageID)
+		}
+		imageIDs[cell] = imageID
+		pictures, err := out.GetPictures("Sheet1", cell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pictures) != 1 {
+			t.Fatalf("%s pictures = %d, want 1", cell, len(pictures))
+		}
+		if pictures[0].InsertType != excelize.PictureInsertTypeDISPIMG {
+			t.Fatalf("%s insert type = %v, want DISPIMG", cell, pictures[0].InsertType)
+		}
 	}
-	if !strings.Contains(formula, "DISPIMG") {
-		t.Fatalf("A1 formula = %q, want DISPIMG", formula)
-	}
-	pictures, err := out.GetPictures("Sheet1", "A1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pictures) != 1 {
-		t.Fatalf("A1 pictures = %d, want 1", len(pictures))
-	}
-	if pictures[0].InsertType != excelize.PictureInsertTypeDISPIMG {
-		t.Fatalf("A1 insert type = %v, want DISPIMG", pictures[0].InsertType)
+	if imageIDs["A1"] == imageIDs["B1"] {
+		t.Fatalf("A1 and B1 use the same DISPIMG ID %q", imageIDs["A1"])
 	}
 	assertPackageContainsPart(t, result.OutputPath, "xl/cellimages.xml")
 	assertPackageContainsPart(t, result.OutputPath, "xl/_rels/cellimages.xml.rels")
+	parts := readXMLPartsForTest(t, result.OutputPath)
+	sheetXML := parts["xl/worksheets/sheet1.xml"]
+	cellImagesXML := parts["xl/cellimages.xml"]
+	workbookRelsXML := parts["xl/_rels/workbook.xml.rels"]
+	for _, imageID := range imageIDs {
+		if !bytes.Contains(cellImagesXML, []byte(imageID)) {
+			t.Fatalf("cellimages.xml does not contain %s:\n%s", imageID, cellImagesXML)
+		}
+		if !bytes.Contains(sheetXML, []byte(`=DISPIMG(&#34;`+imageID+`&#34;,1)`)) &&
+			!bytes.Contains(sheetXML, []byte(`=DISPIMG(&quot;`+imageID+`&quot;,1)`)) &&
+			!bytes.Contains(sheetXML, []byte(`=DISPIMG("`+imageID+`",1)`)) {
+			t.Fatalf("worksheet does not contain cached DISPIMG value for %s:\n%s", imageID, sheetXML)
+		}
+	}
+	for _, want := range []string{
+		wpsCellImageRelType,
+		`Target="cellimages.xml"`,
+	} {
+		if !bytes.Contains(workbookRelsXML, []byte(want)) {
+			t.Fatalf("workbook relationships do not contain %s:\n%s", want, workbookRelsXML)
+		}
+	}
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/richData/")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/metadata.xml")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/calcChain.xml")
-	assertPackageDoesNotContain(t, result.OutputPath, url, "#VALUE!", "IMAGE(")
-	assertPackageDoesNotContain(t, result.OutputPath,
-		"_xlfn.DISPIMG", "<v>ID_", `t="str"`,
-		"xdr:cNvPicPr", "a:stretch", "xdr:spPr",
-		"richData/", "calcChain.xml",
-	)
+	assertPackageContains(t, result.OutputPath, "_xlfn.DISPIMG")
+	assertPackageContains(t, result.OutputPath, `<v>=DISPIMG`)
+	assertPackageContains(t, result.OutputPath, `t="str"`)
+	assertPackageContains(t, result.OutputPath, "xdr:cNvPicPr")
+	assertPackageContains(t, result.OutputPath, "a:picLocks")
+	assertPackageContains(t, result.OutputPath, "a:stretch")
+	assertPackageContains(t, result.OutputPath, "xdr:spPr")
+	assertPackageDoesNotContain(t, result.OutputPath, plainURL, formulaURL, "#VALUE!", "IMAGE(", "<v>ID_")
+	if bytes.Contains(sheetXML, []byte("<v>0</v>")) {
+		t.Fatalf("worksheet contains stale zero DISPIMG cache:\n%s", sheetXML)
+	}
 	assertXMLPartsParse(t, result.OutputPath)
 	assertNoConverterTempFiles(t, result.OutputPath)
 }
