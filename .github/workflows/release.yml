@@ -190,41 +190,48 @@ jobs:
             return JSON.parse(text);
           }
 
-          let release = await getReleaseByTag();
-          if (!release) {
-            release = await request(`${apiBase}/releases`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                tag_name: tag,
-                name: `Excel Image Converter ${tag}`,
-                body: "自动构建发布。包含 Windows amd64 exe、macOS Apple Silicon dmg 和 SHA256 校验文件。",
-              }),
-            });
-          }
-
-          const files = fs.readdirSync(assetDir)
-            .map((name) => path.join(assetDir, name))
-            .filter((file) => fs.statSync(file).isFile());
-
-          const existingAssets = release.assets || [];
-          for (const file of files) {
-            const name = path.basename(file);
-            const existing = existingAssets.find((asset) => asset.name === name);
-            if (existing) {
-              await request(existing.url, { method: "DELETE" });
+          async function main() {
+            let release = await getReleaseByTag();
+            if (!release) {
+              release = await request(`${apiBase}/releases`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tag_name: tag,
+                  name: `Excel Image Converter ${tag}`,
+                  body: "自动构建发布。包含 Windows amd64 exe、macOS Apple Silicon dmg 和 SHA256 校验文件。",
+                }),
+              });
             }
 
-            const data = fs.readFileSync(file);
-            const uploadURL = `${release.upload_url.replace(/\{.*\}$/, "")}?name=${encodeURIComponent(name)}`;
-            await request(uploadURL, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/octet-stream",
-                "Content-Length": String(data.length),
-              },
-              body: data,
-            });
-            console.log(`Uploaded ${name}`);
+            const files = fs.readdirSync(assetDir)
+              .map((name) => path.join(assetDir, name))
+              .filter((file) => fs.statSync(file).isFile());
+
+            const existingAssets = release.assets || [];
+            for (const file of files) {
+              const name = path.basename(file);
+              const existing = existingAssets.find((asset) => asset.name === name);
+              if (existing) {
+                await request(existing.url, { method: "DELETE" });
+              }
+
+              const data = fs.readFileSync(file);
+              const uploadURL = `${release.upload_url.replace(/\{.*\}$/, "")}?name=${encodeURIComponent(name)}`;
+              await request(uploadURL, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/octet-stream",
+                  "Content-Length": String(data.length),
+                },
+                body: data,
+              });
+              console.log(`Uploaded ${name}`);
+            }
           }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
           NODE
