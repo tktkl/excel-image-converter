@@ -1652,7 +1652,7 @@ func writeCellImageElement(encoder *xml.Encoder, original xml.StartElement, cell
 
 func writeDispImageElement(encoder *xml.Encoder, original xml.StartElement, cell, imageID string, prefixes namespacePrefixes) error {
 	original = normalizeStartElement(original, prefixes)
-	attrs := make([]xml.Attr, 0, len(original.Attr))
+	attrs := make([]xml.Attr, 0, len(original.Attr)+1)
 	hasRef := false
 	for _, attr := range original.Attr {
 		switch attr.Name.Local {
@@ -1668,6 +1668,7 @@ func writeDispImageElement(encoder *xml.Encoder, original xml.StartElement, cell
 	if !hasRef {
 		attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "r"}, Value: cell})
 	}
+	attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "t"}, Value: "str"})
 	start := xml.StartElement{Name: original.Name, Attr: attrs}
 	return writeDispImageFormula(encoder, start, imageID)
 }
@@ -1689,6 +1690,7 @@ func writeNewDispImageElement(encoder *xml.Encoder, cell, imageID string) error 
 		Name: xml.Name{Local: "c"},
 		Attr: []xml.Attr{
 			{Name: xml.Name{Local: "r"}, Value: cell},
+			{Name: xml.Name{Local: "t"}, Value: "str"},
 		},
 	}
 	return writeDispImageFormula(encoder, start, imageID)
@@ -1719,10 +1721,22 @@ func writeDispImageFormula(encoder *xml.Encoder, start xml.StartElement, imageID
 	if err := encoder.EncodeToken(formulaStart); err != nil {
 		return err
 	}
-	if err := encoder.EncodeToken(xml.CharData(fmt.Sprintf(`DISPIMG("%s",1)`, imageID))); err != nil {
+	if err := encoder.EncodeToken(xml.CharData(fmt.Sprintf(`_xlfn.DISPIMG("%s",1)`, imageID))); err != nil {
 		return err
 	}
 	if err := encoder.EncodeToken(formulaStart.End()); err != nil {
+		return err
+	}
+	// WPS may resolve DISPIMG before recalculating third-party generated files.
+	// Keep the cached formula result aligned with cNvPr@name to avoid #REF!.
+	valueStart := xml.StartElement{Name: xml.Name{Local: "v"}}
+	if err := encoder.EncodeToken(valueStart); err != nil {
+		return err
+	}
+	if err := encoder.EncodeToken(xml.CharData(imageID)); err != nil {
+		return err
+	}
+	if err := encoder.EncodeToken(valueStart.End()); err != nil {
 		return err
 	}
 	return encoder.EncodeToken(start.End())

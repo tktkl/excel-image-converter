@@ -227,9 +227,6 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	if !strings.Contains(formula, "DISPIMG") {
 		t.Fatalf("A1 formula = %q, want DISPIMG", formula)
 	}
-	if strings.Contains(formula, "_xlfn.") {
-		t.Fatalf("A1 formula = %q, want WPS-native DISPIMG without _xlfn prefix", formula)
-	}
 	pictures, err := out.GetPictures("Sheet1", "A1")
 	if err != nil {
 		t.Fatal(err)
@@ -242,11 +239,14 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	}
 	assertPackageContainsPart(t, result.OutputPath, "xl/cellimages.xml")
 	assertPackageContainsPart(t, result.OutputPath, "xl/_rels/cellimages.xml.rels")
+	assertPackageContains(t, result.OutputPath, `_xlfn.DISPIMG`)
+	assertPackageContains(t, result.OutputPath, `<v>ID_`)
+	assertPackageContains(t, result.OutputPath, `t="str"`)
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/richData/")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/metadata.xml")
 	assertPackageDoesNotContainPart(t, result.OutputPath, "xl/calcChain.xml")
 	assertPackageDoesNotContain(t, result.OutputPath, url, "#VALUE!", "IMAGE(")
-	assertPackageDoesNotContain(t, result.OutputPath, "_xlfn.DISPIMG", "richData/", "calcChain.xml")
+	assertPackageDoesNotContain(t, result.OutputPath, "richData/", "calcChain.xml")
 	assertXMLPartsParse(t, result.OutputPath)
 	assertNoConverterTempFiles(t, result.OutputPath)
 }

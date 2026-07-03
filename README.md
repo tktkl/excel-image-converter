@@ -2,7 +2,7 @@
 
 Convert Excel `IMAGE(url)` formulas and plain image links into real Excel pictures embedded in cells.
 
-Current version: `v1.0.7`.
+Current version: `v1.0.8`.
 
 ## Preview
 
@@ -110,7 +110,7 @@ git tag "v$(tr -d '[:space:]' < VERSION)"
 git push origin "v$(tr -d '[:space:]' < VERSION)"
 ```
 
-The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.7` must be released with tag `v1.0.7`.
+The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.8` must be released with tag `v1.0.8`.
 
 The release workflow builds and uploads:
 
