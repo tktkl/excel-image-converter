@@ -148,7 +148,7 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         compatibilityControl.target = self
         compatibilityControl.action = #selector(saveSettingsFromControls)
 
-        let toolbarHint = NSTextField(labelWithString: "不保留原链接；也支持直接拖入 .xlsx 文件。")
+        let toolbarHint = NSTextField(labelWithString: "也支持直接拖入 .xlsx 文件。")
         toolbarHint.textColor = .secondaryLabelColor
         toolbarHint.lineBreakMode = .byTruncatingTail
 

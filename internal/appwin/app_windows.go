@@ -332,7 +332,7 @@ func (a *App) buildUI() error {
 						},
 					},
 					Label{
-						Text:          "不保留原链接；也可以把 .xlsx 文件直接拖到窗口里开始转换",
+						Text:          "也可以把 .xlsx 文件直接拖到窗口里开始转换",
 						StretchFactor: 1,
 					},
 					Label{
