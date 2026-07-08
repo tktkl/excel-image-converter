@@ -35,37 +35,10 @@ private struct HistoryRow: Codable {
 }
 
 private struct AppSettings: Codable {
-    static let currentSettingsVersion = 2
-
-    var settingsVersion: Int
     var keepURL: Bool
     var cellImageMode: String
 
-    static let `default` = AppSettings(settingsVersion: currentSettingsVersion, keepURL: false, cellImageMode: "wps")
-
-    enum CodingKeys: String, CodingKey {
-        case settingsVersion = "settings_version"
-        case keepURL = "keep_url"
-        case cellImageMode = "cell_image_mode"
-    }
-
-    var normalized: AppSettings {
-        if settingsVersion < AppSettings.currentSettingsVersion {
-            return AppSettings.default
-        }
-        return AppSettings(settingsVersion: AppSettings.currentSettingsVersion, keepURL: keepURL, cellImageMode: AppSettings.normalizedMode(cellImageMode))
-    }
-
-    private static func normalizedMode(_ mode: String) -> String {
-        switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "excel", "native", "office":
-            return "excel"
-        case "", "wps", "feishu", "lark", "dispimg", "feishu-wps", "wps-feishu":
-            return "wps"
-        default:
-            return AppSettings.default.cellImageMode
-        }
-    }
+    static let `default` = AppSettings(keepURL: false, cellImageMode: "wps")
 }
 
 private final class ActionTableView: NSTableView {
@@ -84,8 +57,6 @@ private final class ActionTableView: NSTableView {
 
 final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let chooseButton = NSButton(title: "选择 Excel 文件", target: nil, action: nil)
-    private let compatibilityControl = NSSegmentedControl(labels: ["兼容Excel", "兼容飞书/WPS"], trackingMode: .selectOne, target: nil, action: nil)
-    private let keepLinkControl = NSSegmentedControl(labels: ["保留链接：否", "保留链接：是"], trackingMode: .selectOne, target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "准备就绪")
     private let tabView = NSTabView()
     private let runningTable = ActionTableView()
@@ -97,7 +68,6 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var runningRows: [TaskRow] = []
     private var historyRows: [HistoryRow] = []
     private let historyURL: URL
-    private let settingsURL: URL
     private let conversionQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "ExcelImageConverter.ConversionQueue"
@@ -110,10 +80,8 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let dir = appSupport.appendingPathComponent("ExcelImageConverter", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         historyURL = dir.appendingPathComponent("history.json")
-        settingsURL = dir.appendingPathComponent("settings.json")
         super.init(frame: frameRect)
         setupUI()
-        loadSettings()
         loadHistory()
     }
 
@@ -144,15 +112,9 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         chooseButton.bezelStyle = .rounded
         chooseButton.controlSize = .large
 
-        keepLinkControl.selectedSegment = 0
-        keepLinkControl.controlSize = .large
-        keepLinkControl.target = self
-        keepLinkControl.action = #selector(saveSettingsFromControls)
-
-        compatibilityControl.selectedSegment = 1
-        compatibilityControl.controlSize = .large
-        compatibilityControl.target = self
-        compatibilityControl.action = #selector(saveSettingsFromControls)
+        let toolbarHint = NSTextField(labelWithString: "默认按兼容飞书/WPS模式转换，不保留原链接；也支持直接拖入 .xlsx 文件。")
+        toolbarHint.textColor = .secondaryLabelColor
+        toolbarHint.lineBreakMode = .byTruncatingTail
 
         let titleBlock = NSStackView(views: [title, subtitle])
         titleBlock.orientation = .vertical
@@ -167,7 +129,7 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         titleBlock.setContentHuggingPriority(.defaultLow, for: .horizontal)
         author.setContentHuggingPriority(.required, for: .horizontal)
 
-        let toolbar = NSStackView(views: [chooseButton, compatibilityControl, keepLinkControl, statusLabel])
+        let toolbar = NSStackView(views: [chooseButton, toolbarHint, statusLabel])
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = 12
@@ -443,16 +405,8 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         statusLabel.stringValue = "历史记录已清理"
     }
 
-    @objc private func saveSettingsFromControls() {
-        save(settings: currentSettings())
-    }
-
     private func currentSettings() -> AppSettings {
-        AppSettings(
-            settingsVersion: AppSettings.currentSettingsVersion,
-            keepURL: keepLinkControl.selectedSegment == 1,
-            cellImageMode: compatibilityControl.selectedSegment == 1 ? "wps" : "excel"
-        )
+        .default
     }
 
     @objc private func doubleClickTable(_ sender: NSTableView) {
@@ -510,24 +464,6 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         decoder.dateDecodingStrategy = .iso8601
         historyRows = (try? decoder.decode([HistoryRow].self, from: data)) ?? []
         historyTable.reloadData()
-    }
-
-    private func loadSettings() {
-        let settings: AppSettings
-        if let data = try? Data(contentsOf: settingsURL),
-           let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            settings = decoded.normalized
-        } else {
-            settings = .default
-        }
-        keepLinkControl.selectedSegment = settings.keepURL ? 1 : 0
-        compatibilityControl.selectedSegment = settings.cellImageMode == "wps" ? 1 : 0
-    }
-
-    private func save(settings: AppSettings) {
-        if let data = try? JSONEncoder().encode(settings) {
-            try? data.write(to: settingsURL)
-        }
     }
 
     private func saveHistory() {

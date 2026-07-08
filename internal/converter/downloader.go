@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"mime"
 	"net/http"
@@ -16,6 +17,8 @@ var errUnsupportedImageType = errors.New("unsupported image type")
 type downloadedImage struct {
 	Bytes     []byte
 	Extension string
+	Width     int
+	Height    int
 }
 
 func downloadImage(opts Options, rawURL string) (downloadedImage, error) {
@@ -53,7 +56,16 @@ func downloadImage(opts Options, rawURL string) (downloadedImage, error) {
 		return downloadedImage{}, errUnsupportedImageType
 	}
 
-	return downloadedImage{Bytes: body, Extension: ext}, nil
+	width, height := imageDimensions(body)
+	return downloadedImage{Bytes: body, Extension: ext, Width: width, Height: height}, nil
+}
+
+func imageDimensions(body []byte) (int, int) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(body))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
 
 func extensionFromContent(contentType string, body []byte) string {

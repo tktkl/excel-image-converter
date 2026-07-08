@@ -56,6 +56,7 @@ const (
 	richValueTypesType      = "application/vnd.ms-excel.rdrichvaluetypes+xml"
 	richValueWebImageType   = "application/vnd.ms-excel.rdrichvaluewebimage+xml"
 	richValueBlockURI       = "{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}"
+	emuPerPixel             = 9525
 )
 
 var mediaFilePattern = regexp.MustCompile(`^xl/media/image(\d+)\.[A-Za-z0-9]+$`)
@@ -178,7 +179,24 @@ type wpsCNvPicPr struct{}
 
 type wpsStretch struct{}
 
-type wpsSpPr struct{}
+type wpsSpPr struct {
+	Xfrm wpsXfrm `xml:"xfrm"`
+}
+
+type wpsXfrm struct {
+	Off wpsPoint `xml:"off"`
+	Ext wpsExt   `xml:"ext"`
+}
+
+type wpsPoint struct {
+	X int `xml:"x,attr"`
+	Y int `xml:"y,attr"`
+}
+
+type wpsExt struct {
+	CX int `xml:"cx,attr"`
+	CY int `xml:"cy,attr"`
+}
 
 type wpsCellImagesWriteXML struct {
 	XMLName    xml.Name            `xml:"etc:cellImages"`
@@ -774,7 +792,7 @@ func addDispImageCellImages(pkg map[string][]byte, images []embeddedCellImage, k
 					Blip:    wpsBlip{Embed: relID},
 					Stretch: wpsStretch{},
 				},
-				SpPr: wpsSpPr{},
+				SpPr: wpsShapeForDownloadedImage(image.Image),
 			},
 		})
 		idByCell[cellKey{Sheet: image.Target.Sheet, Cell: image.Target.Cell}] = imageID
@@ -824,6 +842,7 @@ func marshalWPSCellImages(cellImages *wpsCellImagesXML) ([]byte, error) {
 		CellImages: make([]wpsCellImageWrite, 0, len(cellImages.CellImages)),
 	}
 	for _, image := range cellImages.CellImages {
+		shape := normalizedWPSShape(image.Pic.SpPr)
 		out.CellImages = append(out.CellImages, wpsCellImageWrite{
 			Pic: wpsPicWrite{
 				NvPicPr: wpsNvPicPrWrite{
@@ -842,8 +861,8 @@ func marshalWPSCellImages(cellImages *wpsCellImagesXML) ([]byte, error) {
 				},
 				SpPr: wpsSpPrWrite{
 					Xfrm: wpsXfrmWrite{
-						Off: wpsPointWrite{X: 3939540, Y: 914400},
-						Ext: wpsExtWrite{CX: 1142365, CY: 198120},
+						Off: wpsPointWrite{X: shape.Xfrm.Off.X, Y: shape.Xfrm.Off.Y},
+						Ext: wpsExtWrite{CX: shape.Xfrm.Ext.CX, CY: shape.Xfrm.Ext.CY},
 					},
 					PrstGeom: wpsPrstGeomWrite{
 						Prst:  "rect",
@@ -854,6 +873,40 @@ func marshalWPSCellImages(cellImages *wpsCellImagesXML) ([]byte, error) {
 		})
 	}
 	return xml.Marshal(out)
+}
+
+func wpsShapeForDownloadedImage(image downloadedImage) wpsSpPr {
+	if image.Width > 0 && image.Height > 0 {
+		return wpsSpPr{
+			Xfrm: wpsXfrm{
+				Off: wpsPoint{},
+				Ext: wpsExt{
+					CX: image.Width * emuPerPixel,
+					CY: image.Height * emuPerPixel,
+				},
+			},
+		}
+	}
+	return defaultWPSShape()
+}
+
+func normalizedWPSShape(shape wpsSpPr) wpsSpPr {
+	if shape.Xfrm.Ext.CX > 0 && shape.Xfrm.Ext.CY > 0 {
+		return shape
+	}
+	return defaultWPSShape()
+}
+
+func defaultWPSShape() wpsSpPr {
+	return wpsSpPr{
+		Xfrm: wpsXfrm{
+			Off: wpsPoint{},
+			Ext: wpsExt{
+				CX: 1142365,
+				CY: 198120,
+			},
+		},
+	}
 }
 
 func usedDispImageIDs(cellImages *wpsCellImagesXML) map[string]bool {

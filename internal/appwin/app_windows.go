@@ -240,21 +240,11 @@ func Run(initialFiles []string) error {
 	if err != nil {
 		return err
 	}
-	settingsStore, err := settings.NewDefaultStore()
-	if err != nil {
-		return err
-	}
-	appSettings, err := settingsStore.Load()
-	if err != nil {
-		return err
-	}
 
 	app := &App{
 		runningModel:       &taskModel{},
 		historyModel:       &historyModel{},
 		store:              store,
-		settingsStore:      settingsStore,
-		settings:           appSettings,
 		convertSlots:       make(chan struct{}, 2),
 		runningClickColumn: -1,
 		historyClickColumn: -1,
@@ -265,7 +255,6 @@ func Run(initialFiles []string) error {
 	if err := app.buildUI(); err != nil {
 		return err
 	}
-	app.applySettings()
 	if len(initialFiles) > 0 {
 		app.enqueueFiles(initialFiles)
 	}
@@ -333,44 +322,8 @@ func (a *App) buildUI() error {
 						},
 					},
 					Label{
-						Text:          "也可以把 .xlsx 文件直接拖到窗口里开始转换",
+						Text:          "默认按兼容飞书/WPS模式转换，不保留原链接；也可以把 .xlsx 文件直接拖到窗口里开始转换",
 						StretchFactor: 1,
-					},
-					Label{
-						Text: "兼容模式：",
-					},
-					Composite{
-						Layout: HBox{MarginsZero: true, Spacing: 6},
-						Children: []Widget{
-							RadioButton{
-								AssignTo:  &a.compatExcel,
-								Text:      "兼容Excel",
-								OnClicked: a.saveCurrentSettings,
-							},
-							RadioButton{
-								AssignTo:  &a.compatWPS,
-								Text:      "兼容飞书/WPS",
-								OnClicked: a.saveCurrentSettings,
-							},
-						},
-					},
-					Label{
-						Text: "保留链接：",
-					},
-					Composite{
-						Layout: HBox{MarginsZero: true, Spacing: 6},
-						Children: []Widget{
-							RadioButton{
-								AssignTo:  &a.keepLinkYes,
-								Text:      "是",
-								OnClicked: a.saveCurrentSettings,
-							},
-							RadioButton{
-								AssignTo:  &a.keepLinkNo,
-								Text:      "否",
-								OnClicked: a.saveCurrentSettings,
-							},
-						},
 					},
 					Label{
 						AssignTo: &a.statusLabel,
@@ -719,9 +672,7 @@ func (a *App) saveCurrentSettings() {
 }
 
 func (a *App) currentSettings() settings.Settings {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.settings
+	return settings.Default()
 }
 
 func (a *App) clearHistory() {

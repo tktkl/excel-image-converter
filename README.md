@@ -23,8 +23,7 @@ The tool is designed for non-technical Windows and macOS users:
 - Review past conversions in the "历史记录" tab.
 - Open source or converted files from either tab.
 - Click the folder column to reveal a file in Explorer or Finder.
-- Choose "兼容Excel" for native Excel cell pictures, or "兼容飞书/WPS" for WPS `DISPIMG` cell images.
-- The first-run default is "兼容飞书/WPS" and "保留链接：否"; the app remembers later user changes.
+- The GUI always uses "兼容飞书/WPS" and "保留链接：否".
 - Clear conversion history when needed.
 - Converted workbooks are saved next to the source files with `_pictures.xlsx`.
 - GUI conversions are queued globally: at most 2 workbooks convert at the same time, and each workbook uses 4 image download workers.
@@ -48,13 +47,6 @@ History is stored in the user's app data directory:
 ```
 
 If a source or converted file has been deleted, its file name is shown with strike-through text in the History tab.
-
-User options are stored separately:
-
-```text
-%APPDATA%\ExcelImageConverter\settings.json
-~/Library/Application Support/ExcelImageConverter/settings.json
-```
 
 ## Limitations
 

@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/xml"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -300,6 +303,43 @@ func TestConvertFileWPSModeUsesDispImage(t *testing.T) {
 	assertNoConverterTempFiles(t, result.OutputPath)
 }
 
+func TestConvertFileWPSModeUsesImageDimensionsForShape(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "wps-shape.xlsx")
+	f := excelize.NewFile()
+	t.Cleanup(func() {
+		_ = f.Close()
+	})
+	if err := f.SetCellValue("Sheet1", "A1", "https://example.com/aspect.png"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveAs(input); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ConvertFile(input, Options{
+		CellImageMode: CellImageModeWPS,
+		HTTPClient:    testImageHTTPClientWithBody(t, testPNGBytesWithSize(t, 12, 4), "image/png"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parts := readXMLPartsForTest(t, result.OutputPath)
+	var cellImages wpsCellImagesXML
+	if err := xml.Unmarshal(parts["xl/cellimages.xml"], &cellImages); err != nil {
+		t.Fatal(err)
+	}
+	if len(cellImages.CellImages) != 1 {
+		t.Fatalf("cell images = %d, want 1", len(cellImages.CellImages))
+	}
+	got := cellImages.CellImages[0].Pic.SpPr.Xfrm.Ext
+	wantCX := 12 * emuPerPixel
+	wantCY := 4 * emuPerPixel
+	if got.CX != wantCX || got.CY != wantCY {
+		t.Fatalf("WPS shape ext = (%d, %d), want (%d, %d)", got.CX, got.CY, wantCX, wantCY)
+	}
+}
+
 func TestConvertFileDisablesFormulaViewForImageSheets(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "show-formulas.xlsx")
 	f := excelize.NewFile()
@@ -391,14 +431,56 @@ func TestSetWorksheetCellImagesPreservesExtensionNamespaces(t *testing.T) {
 	}
 }
 
+func TestMarshalWPSCellImagesPreservesExistingGeometry(t *testing.T) {
+	cellImages := &wpsCellImagesXML{
+		CellImages: []wpsCellImage{{
+			Pic: wpsPic{
+				NvPicPr: wpsNvPicPr{
+					CNvPr: wpsCNvPr{ID: 1, Name: "ID_TEST", Descr: "CellImage1"},
+				},
+				BlipFill: wpsBlipFill{
+					Blip: wpsBlip{Embed: "rId1"},
+				},
+				SpPr: wpsSpPr{
+					Xfrm: wpsXfrm{
+						Off: wpsPoint{X: 11, Y: 22},
+						Ext: wpsExt{CX: 333, CY: 444},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := marshalWPSCellImages(cellImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded wpsCellImagesXML
+	if err := xml.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.CellImages) != 1 {
+		t.Fatalf("decoded cell images = %d, want 1", len(decoded.CellImages))
+	}
+	got := decoded.CellImages[0].Pic.SpPr.Xfrm
+	if got.Off.X != 11 || got.Off.Y != 22 || got.Ext.CX != 333 || got.Ext.CY != 444 {
+		t.Fatalf("decoded geometry = off(%d,%d) ext(%d,%d), want off(11,22) ext(333,444)", got.Off.X, got.Off.Y, got.Ext.CX, got.Ext.CY)
+	}
+}
+
 func testImageHTTPClient(t *testing.T) *http.Client {
 	t.Helper()
-	png := testPNGBytes(t)
+	return testImageHTTPClientWithBody(t, testPNGBytes(t), "image/png")
+}
+
+func testImageHTTPClientWithBody(t *testing.T, body []byte, contentType string) *http.Client {
+	t.Helper()
 	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"image/png"}},
-			Body:       io.NopCloser(bytes.NewReader(png)),
+			Header:     http.Header{"Content-Type": []string{contentType}},
+			Body:       io.NopCloser(bytes.NewReader(body)),
 			Request:    req,
 		}, nil
 	})}
@@ -441,11 +523,27 @@ func concurrentTestImageHTTPClient(t *testing.T) (*http.Client, *atomic.Int32) {
 
 func testPNGBytes(t *testing.T) []byte {
 	t.Helper()
-	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	pngBytes, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return png
+	return pngBytes
+}
+
+func testPNGBytesWithSize(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	fill := color.NRGBA{R: 0x22, G: 0x88, B: 0xdd, A: 0xff}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetNRGBA(x, y, fill)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
