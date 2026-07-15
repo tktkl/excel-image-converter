@@ -104,3 +104,10 @@ func TestOptionsDefaultMaxImageBytes(t *testing.T) {
 		t.Fatalf("MaxImageBytes = %d, want 100MB", opts.MaxImageBytes)
 	}
 }
+
+func TestOptionsDefaultDownloadRetries(t *testing.T) {
+	opts := Options{}.withDefaults()
+	if opts.DownloadRetries != 5 {
+		t.Fatalf("DownloadRetries = %d, want 5", opts.DownloadRetries)
+	}
+}

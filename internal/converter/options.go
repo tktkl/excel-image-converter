@@ -101,7 +101,7 @@ func (o Options) withDefaults() Options {
 	case o.DownloadRetries < 0:
 		o.DownloadRetries = 0
 	case o.DownloadRetries == 0:
-		o.DownloadRetries = 3
+		o.DownloadRetries = 5
 	case o.DownloadRetries > 5:
 		o.DownloadRetries = 5
 	}

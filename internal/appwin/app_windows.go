@@ -70,6 +70,7 @@ type App struct {
 	mu      sync.Mutex
 
 	updateCheckRunning bool
+	updateCheckManual  bool
 }
 
 type taskRow struct {
@@ -722,18 +723,19 @@ func (a *App) currentSettings() settings.Settings {
 }
 
 func (a *App) checkForUpdates(manual bool) {
-	if !a.beginUpdateCheck() {
+	started, effectiveManual := a.beginUpdateCheck(manual)
+	if !started {
 		if manual {
+			a.setUpdateButtonEnabled(false)
 			a.setStatus("正在检查更新")
 		}
 		return
 	}
-	if manual {
+	if effectiveManual {
 		a.setUpdateButtonEnabled(false)
 		a.setStatus("正在检查更新")
 	}
 	go func() {
-		defer a.endUpdateCheck()
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 
@@ -743,18 +745,19 @@ func (a *App) checkForUpdates(manual bool) {
 		}.Check(ctx, buildinfo.DisplayVersion())
 
 		a.mw.Synchronize(func() {
-			if manual {
+			notifyManual := a.endUpdateCheck()
+			if notifyManual {
 				a.setUpdateButtonEnabled(true)
 			}
 			if err != nil {
-				if manual {
+				if notifyManual {
 					walk.MsgBox(a.mw, "检查更新失败", displayErrorMessage(err.Error()), walk.MsgBoxIconError)
 					a.setStatus("检查更新失败")
 				}
 				return
 			}
 			if !result.HasUpdate {
-				if manual {
+				if notifyManual {
 					walk.MsgBox(a.mw, "检查更新", "当前已是最新版本。", walk.MsgBoxIconInformation)
 					a.setStatus("当前已是最新版本")
 				}
@@ -762,7 +765,7 @@ func (a *App) checkForUpdates(manual bool) {
 			}
 
 			current := a.currentSettings()
-			if !manual && current.IgnoredUpdateVersion == result.LatestVersion {
+			if !notifyManual && current.IgnoredUpdateVersion == result.LatestVersion {
 				return
 			}
 			a.showUpdateDialog(result)
@@ -770,20 +773,27 @@ func (a *App) checkForUpdates(manual bool) {
 	}()
 }
 
-func (a *App) beginUpdateCheck() bool {
+func (a *App) beginUpdateCheck(manual bool) (started bool, effectiveManual bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.updateCheckRunning {
-		return false
+		if manual {
+			a.updateCheckManual = true
+		}
+		return false, a.updateCheckManual
 	}
 	a.updateCheckRunning = true
-	return true
+	a.updateCheckManual = manual
+	return true, manual
 }
 
-func (a *App) endUpdateCheck() {
+func (a *App) endUpdateCheck() bool {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	manual := a.updateCheckManual
 	a.updateCheckRunning = false
-	a.mu.Unlock()
+	a.updateCheckManual = false
+	return manual
 }
 
 func (a *App) setUpdateButtonEnabled(enabled bool) {

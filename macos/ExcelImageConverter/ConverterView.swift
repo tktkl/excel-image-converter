@@ -99,6 +99,7 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var runningRows: [TaskRow] = []
     private var historyRows: [HistoryRow] = []
     private var updateCheckRunning = false
+    private var updateCheckManual = false
     private let historyURL: URL
     private let settingsURL: URL
     private let conversionQueue: OperationQueue = {
@@ -463,14 +464,19 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func checkForUpdates(manual: Bool) {
-        guard !updateCheckRunning else {
+        let effectiveManual: Bool
+        if updateCheckRunning {
             if manual {
+                updateCheckManual = true
+                updateButton.isEnabled = false
                 statusLabel.stringValue = "正在检查更新"
             }
             return
         }
         updateCheckRunning = true
-        if manual {
+        updateCheckManual = manual
+        effectiveManual = manual
+        if effectiveManual {
             updateButton.isEnabled = false
             statusLabel.stringValue = "正在检查更新"
         }
@@ -478,26 +484,28 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         UpdateChecker.check(currentVersion: appVersion) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                let notifyManual = self.updateCheckManual
                 self.updateCheckRunning = false
-                if manual {
+                self.updateCheckManual = false
+                if notifyManual {
                     self.updateButton.isEnabled = true
                 }
                 switch result {
                 case .success(let update):
                     guard update.hasUpdate else {
-                        if manual {
+                        if notifyManual {
                             self.showInfo(title: "检查更新", message: "当前已是最新版本。")
                             self.statusLabel.stringValue = "当前已是最新版本"
                         }
                         return
                     }
                     let ignoredVersion = self.loadSettingsSnapshot().ignoredUpdateVersion
-                    if !manual, ignoredVersion == update.latestVersion {
+                    if !notifyManual, ignoredVersion == update.latestVersion {
                         return
                     }
                     self.showUpdateAlert(update)
                 case .failure(let error):
-                    if manual {
+                    if notifyManual {
                         self.showInfo(title: "检查更新失败", message: error.localizedDescription)
                         self.statusLabel.stringValue = "检查更新失败"
                     }
