@@ -3,8 +3,10 @@
 package appwin
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"github.com/wutong/excel-image-converter/internal/converter"
 	"github.com/wutong/excel-image-converter/internal/history"
 	"github.com/wutong/excel-image-converter/internal/settings"
+	"github.com/wutong/excel-image-converter/internal/updater"
 )
 
 const (
@@ -40,13 +43,14 @@ const (
 type App struct {
 	mw *walk.MainWindow
 
-	runningView *walk.TableView
-	historyView *walk.TableView
-	statusLabel *walk.Label
-	addButton   *walk.PushButton
-	clearButton *walk.PushButton
-	compatExcel *walk.RadioButton
-	compatWPS   *walk.RadioButton
+	runningView  *walk.TableView
+	historyView  *walk.TableView
+	statusLabel  *walk.Label
+	addButton    *walk.PushButton
+	clearButton  *walk.PushButton
+	updateButton *walk.PushButton
+	compatExcel  *walk.RadioButton
+	compatWPS    *walk.RadioButton
 
 	runningModel  *taskModel
 	historyModel  *historyModel
@@ -64,6 +68,8 @@ type App struct {
 
 	history []history.Entry
 	mu      sync.Mutex
+
+	updateCheckRunning bool
 }
 
 type taskRow struct {
@@ -268,6 +274,9 @@ func Run(initialFiles []string) error {
 	if len(initialFiles) > 0 {
 		app.enqueueFiles(initialFiles)
 	}
+	time.AfterFunc(1500*time.Millisecond, func() {
+		app.checkForUpdates(false)
+	})
 	app.mw.Run()
 	return nil
 }
@@ -313,10 +322,23 @@ func (a *App) buildUI() error {
 							},
 						},
 					},
-					Label{
-						Text:      fmt.Sprintf("v%s\npower by Thunder.Wu", buildinfo.DisplayVersion()),
-						Alignment: AlignHFarVFar,
-						Font:      Font{Family: "Segoe UI", PointSize: 9, Italic: true},
+					Composite{
+						Layout: HBox{MarginsZero: true, Spacing: 8},
+						Children: []Widget{
+							Label{
+								Text:      fmt.Sprintf("v%s\npower by Thunder.Wu", buildinfo.DisplayVersion()),
+								Alignment: AlignHFarVFar,
+								Font:      Font{Family: "Segoe UI", PointSize: 9, Italic: true},
+							},
+							PushButton{
+								AssignTo: &a.updateButton,
+								Text:     "检查更新",
+								MinSize:  Size{Width: 88, Height: 30},
+								OnClicked: func() {
+									a.checkForUpdates(true)
+								},
+							},
+						},
 					},
 				},
 			},
@@ -671,10 +693,9 @@ func (a *App) applySettings() {
 }
 
 func (a *App) saveCurrentSettings() {
-	current := settings.Settings{
-		KeepURL:       false,
-		CellImageMode: converter.DefaultCellImageMode(),
-	}
+	current := a.currentSettings()
+	current.KeepURL = false
+	current.CellImageMode = converter.DefaultCellImageMode()
 	if a.compatExcel != nil && a.compatExcel.Checked() {
 		current.CellImageMode = converter.CellImageModeExcel
 	} else if a.compatWPS != nil && a.compatWPS.Checked() {
@@ -698,6 +719,193 @@ func (a *App) currentSettings() settings.Settings {
 	current := a.settings
 	current.KeepURL = false
 	return current
+}
+
+func (a *App) checkForUpdates(manual bool) {
+	if !a.beginUpdateCheck() {
+		if manual {
+			a.setStatus("正在检查更新")
+		}
+		return
+	}
+	if manual {
+		a.setUpdateButtonEnabled(false)
+		a.setStatus("正在检查更新")
+	}
+	go func() {
+		defer a.endUpdateCheck()
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+
+		result, err := updater.Checker{
+			UserAgent: fmt.Sprintf("ExcelImageConverter/%s", buildinfo.DisplayVersion()),
+			Platform:  "windows",
+		}.Check(ctx, buildinfo.DisplayVersion())
+
+		a.mw.Synchronize(func() {
+			if manual {
+				a.setUpdateButtonEnabled(true)
+			}
+			if err != nil {
+				if manual {
+					walk.MsgBox(a.mw, "检查更新失败", displayErrorMessage(err.Error()), walk.MsgBoxIconError)
+					a.setStatus("检查更新失败")
+				}
+				return
+			}
+			if !result.HasUpdate {
+				if manual {
+					walk.MsgBox(a.mw, "检查更新", "当前已是最新版本。", walk.MsgBoxIconInformation)
+					a.setStatus("当前已是最新版本")
+				}
+				return
+			}
+
+			current := a.currentSettings()
+			if !manual && current.IgnoredUpdateVersion == result.LatestVersion {
+				return
+			}
+			a.showUpdateDialog(result)
+		})
+	}()
+}
+
+func (a *App) beginUpdateCheck() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.updateCheckRunning {
+		return false
+	}
+	a.updateCheckRunning = true
+	return true
+}
+
+func (a *App) endUpdateCheck() {
+	a.mu.Lock()
+	a.updateCheckRunning = false
+	a.mu.Unlock()
+}
+
+func (a *App) setUpdateButtonEnabled(enabled bool) {
+	if a.updateButton != nil {
+		a.updateButton.SetEnabled(enabled)
+	}
+}
+
+func (a *App) showUpdateDialog(result updater.Result) {
+	var dlg *walk.Dialog
+	var updateButton *walk.PushButton
+	var ignoreButton *walk.PushButton
+	var laterButton *walk.PushButton
+	action := "later"
+
+	message := fmt.Sprintf("发现新版本 v%s\n当前版本 v%s\n点击“立即更新”将打开下载页面。", result.LatestVersion, result.CurrentVersion)
+	if notes := compactReleaseNotes(result.Notes); notes != "" {
+		message += "\n\n更新说明：\n" + notes
+	}
+
+	_, err := Dialog{
+		AssignTo: &dlg,
+		Title:    "发现新版本",
+		MinSize:  Size{Width: 460, Height: 230},
+		Layout:   VBox{Margins: Margins{Left: 16, Top: 16, Right: 16, Bottom: 16}, Spacing: 12},
+		Children: []Widget{
+			Label{
+				Text: message,
+			},
+			Composite{
+				Layout: HBox{MarginsZero: true, Spacing: 8},
+				Children: []Widget{
+					HSpacer{},
+					PushButton{
+						AssignTo: &updateButton,
+						Text:     "立即更新",
+						MinSize:  Size{Width: 86, Height: 30},
+						OnClicked: func() {
+							action = "update"
+							dlg.Accept()
+						},
+					},
+					PushButton{
+						AssignTo: &ignoreButton,
+						Text:     "忽略本次",
+						MinSize:  Size{Width: 86, Height: 30},
+						OnClicked: func() {
+							action = "ignore"
+							dlg.Accept()
+						},
+					},
+					PushButton{
+						AssignTo: &laterButton,
+						Text:     "稍后",
+						MinSize:  Size{Width: 72, Height: 30},
+						OnClicked: func() {
+							action = "later"
+							dlg.Cancel()
+						},
+					},
+				},
+			},
+		},
+		DefaultButton: &updateButton,
+		CancelButton:  &laterButton,
+	}.Run(a.mw)
+	if err != nil {
+		walk.MsgBox(a.mw, "更新提醒失败", displayErrorMessage(err.Error()), walk.MsgBoxIconError)
+		return
+	}
+
+	switch action {
+	case "update":
+		a.openUpdatePage(result)
+	case "ignore":
+		a.ignoreUpdateVersion(result.LatestVersion)
+	}
+}
+
+func (a *App) openUpdatePage(result updater.Result) {
+	target := result.DownloadURL
+	if target == "" {
+		target = result.ReleaseURL
+	}
+	if target == "" {
+		walk.MsgBox(a.mw, "打开更新失败", "没有可用的更新下载地址。", walk.MsgBoxIconError)
+		return
+	}
+	openURL(target)
+}
+
+func (a *App) ignoreUpdateVersion(version string) {
+	if version == "" {
+		return
+	}
+	current := a.currentSettings()
+	current.IgnoredUpdateVersion = version
+
+	a.mu.Lock()
+	a.settings = current
+	a.mu.Unlock()
+
+	if a.settingsStore != nil {
+		if err := a.settingsStore.Save(current); err != nil {
+			a.setStatus("设置保存失败：" + displayErrorMessage(err.Error()))
+			return
+		}
+	}
+	a.setStatus("已忽略本次更新")
+}
+
+func compactReleaseNotes(notes string) string {
+	notes = strings.TrimSpace(notes)
+	if notes == "" {
+		return ""
+	}
+	const maxRunes = 360
+	runes := []rune(notes)
+	if len(runes) > maxRunes {
+		notes = string(runes[:maxRunes]) + "..."
+	}
+	return notes
 }
 
 func (a *App) clearHistory() {
@@ -893,6 +1101,17 @@ func openIfExists(path string) {
 		return
 	}
 	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", path).Start()
+}
+
+func openURL(rawURL string) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", rawURL).Start()
+	}
 }
 
 func openFolderForFile(path string) {

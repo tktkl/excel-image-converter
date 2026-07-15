@@ -42,7 +42,7 @@ func runCLI() int {
 	flags.StringVar(&compatMode, "compat", string(converter.DefaultCellImageMode()), "compatibility mode: excel or wps")
 	flags.BoolVar(&overwrite, "overwrite", false, "overwrite existing output files")
 	flags.IntVar(&timeoutSeconds, "timeout", 30, "download timeout in seconds")
-	flags.IntVar(&maxMB, "max-mb", 25, "maximum image size in MB")
+	flags.IntVar(&maxMB, "max-mb", 100, "maximum image size in MB")
 	flags.IntVar(&workers, "workers", 4, "number of concurrent image downloads per workbook")
 	flags.BoolVar(&quiet, "quiet", false, "suppress per-image progress output")
 	flags.BoolVar(&showVersion, "version", false, "print version and exit")

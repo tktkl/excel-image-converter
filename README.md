@@ -2,7 +2,7 @@
 
 Convert Excel `IMAGE(url)` formulas and plain image links into real Excel pictures embedded in cells.
 
-Current version: `v1.0.10`.
+Current version: `v1.0.14`.
 
 ## Preview
 
@@ -23,6 +23,7 @@ The tool is designed for non-technical Windows and macOS users:
 - Review past conversions in the "历史记录" tab.
 - Open source or converted files from either tab.
 - Click the folder column to reveal a file in Explorer or Finder.
+- Check GitHub Releases for updates manually, or get a startup reminder when a newer version is available.
 - The GUI always uses "兼容飞书/WPS" and "保留链接：否".
 - Clear conversion history when needed.
 - Converted workbooks are saved next to the source files with `_pictures.xlsx`.
@@ -102,7 +103,7 @@ git tag "v$(tr -d '[:space:]' < VERSION)"
 git push origin "v$(tr -d '[:space:]' < VERSION)"
 ```
 
-The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.10` must be released with tag `v1.0.10`.
+The tag must match `VERSION` without the leading `v`. For example, `VERSION=1.0.14` must be released with tag `v1.0.14`.
 
 The release workflow builds and uploads:
 

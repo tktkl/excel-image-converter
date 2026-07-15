@@ -43,7 +43,7 @@ func TestSaveAndLoadPreservesCurrentUserChoice(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	store := &Store{path: path}
 
-	if err := store.Save(Settings{KeepURL: true, CellImageMode: converter.CellImageModeExcel}); err != nil {
+	if err := store.Save(Settings{KeepURL: true, CellImageMode: converter.CellImageModeExcel, IgnoredUpdateVersion: "1.0.14"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load()
@@ -58,5 +58,8 @@ func TestSaveAndLoadPreservesCurrentUserChoice(t *testing.T) {
 	}
 	if loaded.SettingsVersion != currentSettingsVersion {
 		t.Fatalf("Load().SettingsVersion = %d, want %d", loaded.SettingsVersion, currentSettingsVersion)
+	}
+	if loaded.IgnoredUpdateVersion != "1.0.14" {
+		t.Fatalf("Load().IgnoredUpdateVersion = %q, want 1.0.14", loaded.IgnoredUpdateVersion)
 	}
 }

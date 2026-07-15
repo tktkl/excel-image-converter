@@ -40,20 +40,22 @@ private struct AppSettings: Codable {
     var settingsVersion: Int
     var keepURL: Bool
     var cellImageMode: String
+    var ignoredUpdateVersion: String?
 
-    static let `default` = AppSettings(settingsVersion: currentSettingsVersion, keepURL: false, cellImageMode: "wps")
+    static let `default` = AppSettings(settingsVersion: currentSettingsVersion, keepURL: false, cellImageMode: "wps", ignoredUpdateVersion: nil)
 
     enum CodingKeys: String, CodingKey {
         case settingsVersion = "settings_version"
         case keepURL = "keep_url"
         case cellImageMode = "cell_image_mode"
+        case ignoredUpdateVersion = "ignored_update_version"
     }
 
     var normalized: AppSettings {
         if settingsVersion < AppSettings.currentSettingsVersion {
             return AppSettings.default
         }
-        return AppSettings(settingsVersion: AppSettings.currentSettingsVersion, keepURL: false, cellImageMode: AppSettings.normalizedMode(cellImageMode))
+        return AppSettings(settingsVersion: AppSettings.currentSettingsVersion, keepURL: false, cellImageMode: AppSettings.normalizedMode(cellImageMode), ignoredUpdateVersion: ignoredUpdateVersion)
     }
 
     private static func normalizedMode(_ mode: String) -> String {
@@ -84,6 +86,7 @@ private final class ActionTableView: NSTableView {
 
 final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let chooseButton = NSButton(title: "选择 Excel 文件", target: nil, action: nil)
+    private let updateButton = NSButton(title: "检查更新", target: nil, action: nil)
     private let compatibilityControl = NSSegmentedControl(labels: ["兼容Excel", "兼容飞书/WPS"], trackingMode: .selectOne, target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "准备就绪")
     private let tabView = NSTabView()
@@ -95,6 +98,7 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private var runningRows: [TaskRow] = []
     private var historyRows: [HistoryRow] = []
+    private var updateCheckRunning = false
     private let historyURL: URL
     private let settingsURL: URL
     private let conversionQueue: OperationQueue = {
@@ -114,6 +118,9 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         setupUI()
         loadSettings()
         loadHistory()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.checkForUpdates(manual: false)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -138,6 +145,11 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         author.alignment = .right
         author.maximumNumberOfLines = 2
 
+        updateButton.target = self
+        updateButton.action = #selector(checkUpdatesFromButton)
+        updateButton.bezelStyle = .rounded
+        updateButton.controlSize = .small
+
         chooseButton.target = self
         chooseButton.action = #selector(chooseFiles)
         chooseButton.bezelStyle = .rounded
@@ -157,13 +169,18 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         titleBlock.alignment = .leading
         titleBlock.spacing = 4
 
-        let header = NSStackView(views: [titleBlock, author])
+        let versionBlock = NSStackView(views: [author, updateButton])
+        versionBlock.orientation = .horizontal
+        versionBlock.alignment = .centerY
+        versionBlock.spacing = 8
+
+        let header = NSStackView(views: [titleBlock, versionBlock])
         header.orientation = .horizontal
         header.alignment = .bottom
         header.distribution = .fill
         header.spacing = 12
         titleBlock.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        author.setContentHuggingPriority(.required, for: .horizontal)
+        versionBlock.setContentHuggingPriority(.required, for: .horizontal)
 
         let toolbar = NSStackView(views: [chooseButton, compatibilityControl, toolbarHint, statusLabel])
         toolbar.orientation = .horizontal
@@ -441,15 +458,104 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         statusLabel.stringValue = "历史记录已清理"
     }
 
+    @objc private func checkUpdatesFromButton() {
+        checkForUpdates(manual: true)
+    }
+
+    private func checkForUpdates(manual: Bool) {
+        guard !updateCheckRunning else {
+            if manual {
+                statusLabel.stringValue = "正在检查更新"
+            }
+            return
+        }
+        updateCheckRunning = true
+        if manual {
+            updateButton.isEnabled = false
+            statusLabel.stringValue = "正在检查更新"
+        }
+
+        UpdateChecker.check(currentVersion: appVersion) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.updateCheckRunning = false
+                if manual {
+                    self.updateButton.isEnabled = true
+                }
+                switch result {
+                case .success(let update):
+                    guard update.hasUpdate else {
+                        if manual {
+                            self.showInfo(title: "检查更新", message: "当前已是最新版本。")
+                            self.statusLabel.stringValue = "当前已是最新版本"
+                        }
+                        return
+                    }
+                    let ignoredVersion = self.loadSettingsSnapshot().ignoredUpdateVersion
+                    if !manual, ignoredVersion == update.latestVersion {
+                        return
+                    }
+                    self.showUpdateAlert(update)
+                case .failure(let error):
+                    if manual {
+                        self.showInfo(title: "检查更新失败", message: error.localizedDescription)
+                        self.statusLabel.stringValue = "检查更新失败"
+                    }
+                }
+            }
+        }
+    }
+
+    private func showUpdateAlert(_ update: UpdateInfo) {
+        var message = "当前版本 v\(update.currentVersion)\n最新版本 v\(update.latestVersion)\n点击“立即更新”将打开下载页面。"
+        let notes = compact(notes: update.notes)
+        if !notes.isEmpty {
+            message += "\n\n更新说明：\n\(notes)"
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "发现新版本"
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "立即更新")
+        alert.addButton(withTitle: "忽略本次")
+        alert.addButton(withTitle: "稍后")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            if let url = update.updateURL {
+                NSWorkspace.shared.open(url)
+            }
+        case .alertSecondButtonReturn:
+            var settings = currentSettings()
+            settings.ignoredUpdateVersion = update.latestVersion
+            save(settings: settings)
+            statusLabel.stringValue = "已忽略本次更新"
+        default:
+            break
+        }
+    }
+
+    private func showInfo(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "确定")
+        alert.runModal()
+    }
+
     @objc private func saveSettingsFromControls() {
         save(settings: currentSettings())
     }
 
     private func currentSettings() -> AppSettings {
-        AppSettings(
+        let ignoredVersion = loadSettingsSnapshot().ignoredUpdateVersion
+        return AppSettings(
             settingsVersion: AppSettings.currentSettingsVersion,
             keepURL: false,
-            cellImageMode: compatibilityControl.selectedSegment == 1 ? "wps" : "excel"
+            cellImageMode: compatibilityControl.selectedSegment == 1 ? "wps" : "excel",
+            ignoredUpdateVersion: ignoredVersion
         )
     }
 
@@ -511,14 +617,16 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func loadSettings() {
-        let settings: AppSettings
+        let settings = loadSettingsSnapshot()
+        compatibilityControl.selectedSegment = settings.cellImageMode == "wps" ? 1 : 0
+    }
+
+    private func loadSettingsSnapshot() -> AppSettings {
         if let data = try? Data(contentsOf: settingsURL),
            let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            settings = decoded.normalized
-        } else {
-            settings = .default
+            return decoded.normalized
         }
-        compatibilityControl.selectedSegment = settings.cellImageMode == "wps" ? 1 : 0
+        return .default
     }
 
     private func save(settings: AppSettings) {
@@ -534,4 +642,177 @@ final class ConverterView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             try? data.write(to: historyURL)
         }
     }
+}
+
+private struct UpdateInfo {
+    let currentVersion: String
+    let latestVersion: String
+    let hasUpdate: Bool
+    let releaseURL: URL?
+    let downloadURL: URL?
+    let notes: String
+
+    var updateURL: URL? {
+        downloadURL ?? releaseURL
+    }
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String?
+    let body: String?
+    let assets: [GitHubAsset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case body
+        case assets
+    }
+}
+
+private struct GitHubAsset: Decodable {
+    let name: String
+    let browserDownloadURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
+private enum UpdateChecker {
+    private static let apiURL = URL(string: "https://api.github.com/repos/tktkl/excel-image-converter/releases/latest")!
+    private static let latestURL = URL(string: "https://github.com/tktkl/excel-image-converter/releases/latest")!
+    private static let releaseBaseURL = "https://github.com/tktkl/excel-image-converter/releases/tag/"
+
+    static func check(currentVersion: String, completion: @escaping (Result<UpdateInfo, Error>) -> Void) {
+        fetchFromAPI(currentVersion: currentVersion) { apiResult in
+            switch apiResult {
+            case .success:
+                completion(apiResult)
+            case .failure:
+                fetchFromLatestRedirect(currentVersion: currentVersion, completion: completion)
+            }
+        }
+    }
+
+    private static func fetchFromAPI(currentVersion: String, completion: @escaping (Result<UpdateInfo, Error>) -> Void) {
+        var request = URLRequest(url: apiURL, timeoutInterval: 8)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("ExcelImageConverter/\(appVersion)", forHTTPHeaderField: "User-Agent")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let data else {
+                completion(.failure(NSError(domain: "ExcelImageConverter", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub API 暂不可用"])))
+                return
+            }
+            do {
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                completion(.success(updateInfo(currentVersion: currentVersion, release: release)))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    private static func fetchFromLatestRedirect(currentVersion: String, completion: @escaping (Result<UpdateInfo, Error>) -> Void) {
+        var request = URLRequest(url: latestURL, timeoutInterval: 8)
+        request.setValue("ExcelImageConverter/\(appVersion)", forHTTPHeaderField: "User-Agent")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let finalURL = http.url else {
+                completion(.failure(NSError(domain: "ExcelImageConverter", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法连接 GitHub 检查更新"])))
+                return
+            }
+            let tag = tagFromReleaseURL(finalURL.absoluteString)
+            guard !tag.isEmpty else {
+                completion(.failure(NSError(domain: "ExcelImageConverter", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法识别 GitHub 最新版本"])))
+                return
+            }
+            let latestVersion = normalize(version: tag)
+            let info = UpdateInfo(
+                currentVersion: normalize(version: currentVersion),
+                latestVersion: latestVersion,
+                hasUpdate: compare(latestVersion, normalize(version: currentVersion)) > 0,
+                releaseURL: finalURL,
+                downloadURL: nil,
+                notes: ""
+            )
+            completion(.success(info))
+        }.resume()
+    }
+
+    private static func updateInfo(currentVersion: String, release: GitHubRelease) -> UpdateInfo {
+        let current = normalize(version: currentVersion)
+        let latest = normalize(version: release.tagName)
+        return UpdateInfo(
+            currentVersion: current,
+            latestVersion: latest,
+            hasUpdate: compare(latest, current) > 0,
+            releaseURL: release.htmlURL.flatMap(URL.init(string:)) ?? URL(string: releaseBaseURL + "v\(latest)"),
+            downloadURL: downloadURL(from: release.assets),
+            notes: release.body ?? ""
+        )
+    }
+
+    private static func downloadURL(from assets: [GitHubAsset]) -> URL? {
+        for asset in assets {
+            let name = asset.name.lowercased()
+            if name.contains("mac") || name.contains("darwin") || name.contains(".dmg") {
+                return URL(string: asset.browserDownloadURL)
+            }
+        }
+        return nil
+    }
+}
+
+private func normalize(version: String) -> String {
+    var value = version.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.lowercased().hasPrefix("v") {
+        value.removeFirst()
+    }
+    return value
+}
+
+private func compare(_ lhs: String, _ rhs: String) -> Int {
+    let left = versionParts(lhs)
+    let right = versionParts(rhs)
+    let count = max(left.count, right.count)
+    for index in 0..<count {
+        let lv = index < left.count ? left[index] : 0
+        let rv = index < right.count ? right[index] : 0
+        if lv > rv { return 1 }
+        if lv < rv { return -1 }
+    }
+    return 0
+}
+
+private func versionParts(_ version: String) -> [Int] {
+    let normalized = normalize(version: version)
+    let core = normalized.split(separator: "-", maxSplits: 1).first.map(String.init) ?? normalized
+    return core.split(separator: ".").map { Int($0) ?? 0 }
+}
+
+private func tagFromReleaseURL(_ rawURL: String) -> String {
+    guard let range = rawURL.range(of: "/releases/tag/") else { return "" }
+    var tag = String(rawURL[range.upperBound...])
+    if let cut = tag.firstIndex(where: { $0 == "?" || $0 == "#" || $0 == "/" }) {
+        tag = String(tag[..<cut])
+    }
+    return tag
+}
+
+private func compact(notes: String) -> String {
+    let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count > 360 else { return trimmed }
+    return String(trimmed.prefix(360)) + "..."
 }

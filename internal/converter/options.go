@@ -28,6 +28,8 @@ type Options struct {
 	DownloadWorkers int
 	Timeout         time.Duration
 	MaxImageBytes   int64
+	DownloadRetries int
+	RetryBaseDelay  time.Duration
 	UserAgent       string
 	HTTPClient      *http.Client
 	ProgressWriter  ProgressWriter
@@ -93,7 +95,18 @@ func (o Options) withDefaults() Options {
 		o.Timeout = 30 * time.Second
 	}
 	if o.MaxImageBytes <= 0 {
-		o.MaxImageBytes = 25 * 1024 * 1024
+		o.MaxImageBytes = 100 * 1024 * 1024
+	}
+	switch {
+	case o.DownloadRetries < 0:
+		o.DownloadRetries = 0
+	case o.DownloadRetries == 0:
+		o.DownloadRetries = 3
+	case o.DownloadRetries > 5:
+		o.DownloadRetries = 5
+	}
+	if o.RetryBaseDelay <= 0 {
+		o.RetryBaseDelay = 500 * time.Millisecond
 	}
 	if o.UserAgent == "" {
 		o.UserAgent = fmt.Sprintf("ExcelImageConverter/%s", buildinfo.DisplayVersion())

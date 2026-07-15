@@ -11,9 +11,10 @@ import (
 const currentSettingsVersion = 2
 
 type Settings struct {
-	SettingsVersion int                     `json:"settings_version"`
-	KeepURL         bool                    `json:"keep_url"`
-	CellImageMode   converter.CellImageMode `json:"cell_image_mode"`
+	SettingsVersion      int                     `json:"settings_version"`
+	KeepURL              bool                    `json:"keep_url"`
+	CellImageMode        converter.CellImageMode `json:"cell_image_mode"`
+	IgnoredUpdateVersion string                  `json:"ignored_update_version,omitempty"`
 }
 
 type Store struct {
